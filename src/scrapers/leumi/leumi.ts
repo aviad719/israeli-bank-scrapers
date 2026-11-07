@@ -326,11 +326,21 @@ async function navigateToLogin(page: Page): Promise<void> {
   ]);
 }
 
-async function waitForPostLogin(page: Page): Promise<void> {
+// Exported for unit testing.
+export async function waitForPostLogin(page: Page): Promise<void> {
   await Promise.race([
     waitUntilElementFound(page, 'a[title="דלג לחשבון"]', true, 60000),
     waitUntilElementFound(page, 'div.main-content', false, 60000),
-    page.waitForSelector(`xpath//div[contains(string(),"${INVALID_PASSWORD_MSG}")]`),
+    // A successful login navigates to the SPA, so wait for its URL: this settles
+    // the race promptly instead of relying on DOM selectors that may go stale.
+    page.waitForFunction(() => /ebanking\/SO\/SPA\.aspx/i.test(window.location.href), { timeout: 60000 }),
+    // The invalid-password banner only appears on a failed login, so this wait
+    // must never reject the race: on a successful login it never shows up, and
+    // its default-timeout rejection used to fail the whole scrape with a generic
+    // timeout error even though the login had succeeded.
+    page
+      .waitForSelector(`xpath//div[contains(string(),"${INVALID_PASSWORD_MSG}")]`, { timeout: 60000 })
+      .catch(() => undefined),
     waitUntilElementFound(page, CHANGE_PASSWORD_MODAL_SELECTOR, true, 60000),
   ]);
 }
