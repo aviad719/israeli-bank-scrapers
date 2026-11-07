@@ -1,5 +1,6 @@
+import { type Page } from 'puppeteer';
 import { LoginResults } from '../base-scraper-with-browser';
-import LeumiScraper from './leumi';
+import LeumiScraper, { waitForPostLogin } from './leumi';
 import { SHEKEL_CURRENCY } from '../../constants';
 import { SCRAPERS } from '../../definitions';
 import { getDebug } from '../../helpers/debug';
@@ -107,5 +108,63 @@ describe('Leumi legacy scraper', () => {
     } else {
       debug('No foreign currency accounts found - this may be expected if the test account has none');
     }
+  });
+});
+
+describe('Leumi waitForPostLogin', () => {
+  // Fake page mimicking Puppeteer's waiting behavior: waitForSelector resolves
+  // only for selectors that are "present" and rejects (like a timeout) for the
+  // invalid-password banner when it never appears; other absent selectors never
+  // settle within the test, as in a real page load.
+  function createFakePage(options: {
+    errorBannerVisible: boolean;
+    spaUrlLoaded: boolean;
+    changePasswordVisible: boolean;
+  }) {
+    return {
+      waitForSelector: async (selector: string) => {
+        if (selector.includes('שגויים')) {
+          if (options.errorBannerVisible) {
+            return {};
+          }
+          await new Promise(resolve => setTimeout(resolve, 50));
+          throw new Error(`Waiting for selector \`${selector}\` failed`);
+        }
+        if (selector.includes('newPwd')) {
+          if (options.changePasswordVisible) {
+            return {};
+          }
+          return new Promise(() => {});
+        }
+        // Skip link / main content: absent from the current Leumi page.
+        return new Promise(() => {});
+      },
+      waitForFunction: async () => {
+        if (options.spaUrlLoaded) {
+          return {};
+        }
+        return new Promise(() => {});
+      },
+    } as unknown as Page;
+  }
+
+  test('resolves on successful login when the invalid-password banner never appears', async () => {
+    const page = createFakePage({ errorBannerVisible: false, spaUrlLoaded: true, changePasswordVisible: false });
+    await expect(waitForPostLogin(page)).resolves.toBeUndefined();
+  });
+
+  test('resolves when the invalid-password banner appears', async () => {
+    const page = createFakePage({ errorBannerVisible: true, spaUrlLoaded: false, changePasswordVisible: false });
+    await expect(waitForPostLogin(page)).resolves.toBeUndefined();
+  });
+
+  test('resolves when the change-password modal appears', async () => {
+    const page = createFakePage({ errorBannerVisible: false, spaUrlLoaded: false, changePasswordVisible: true });
+    await expect(waitForPostLogin(page)).resolves.toBeUndefined();
+  });
+
+  test('does not reject when no post-login indicator appears', async () => {
+    const page = createFakePage({ errorBannerVisible: false, spaUrlLoaded: false, changePasswordVisible: false });
+    await expect(waitForPostLogin(page)).resolves.toBeUndefined();
   });
 });
